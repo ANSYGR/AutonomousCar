@@ -1,0 +1,142 @@
+//Andy Granfors
+//2025-04-25
+//This program collects distance data from a HCSR04 ultrasonic sensor and processes the data in order to navigate a 4-wheeled vehicle around obstacles with the help of a L293DNE 2-channel motor controller and arduino
+
+//Include libraries
+#include <Servo.h>
+#include <HCSR04.h>
+
+//Global variables
+const int trigPin = 2;
+const int echoPin = 3;
+const int radarServoPin = 8;
+const int steeringServoPin = 11;
+const int motorPin1 = 5;  // Motor A pin 1
+const int motorPin2 = 6;  // Motor A pin 2
+const int motorPin3 = 10; // Motor B pin 1
+const int motorPin4 = 9;  // Motor B pin 2
+
+//Objects and classes
+HCSR04 hc(trigPin, echoPin);
+Servo radarServo;
+Servo steeringServo;
+
+//This is a processing function which averages measurment data and filters out unrealistic data from the sensor. It returns a processed and smoothed-out signal.
+float averageDistance(int samples) {
+  float sum = 0;
+  for (int i = 0; i < samples; i++) {
+    float d = hc.dist();
+    if (d < 1) {
+      d = 200;
+    }
+    sum += d;
+    delay(10);
+  }
+  return sum / samples;
+}
+
+//This is a function which collects the measurment data and organizes it into an array which can be processed and interpreted by other functions.
+typedef float RadarArray[8];
+float* scanRadar() {
+  static RadarArray readings;
+  int idx = 0;
+  for (int angle = 20; angle <= 160; angle += 20) {
+    radarServo.write(angle);
+    delay(60);
+    readings[idx++] = averageDistance(2);
+  }
+  return readings;
+}
+
+//This function serves the main purpose of deciding which way to turn based on the closest detected distance. It returns an integer of the obstacle angle relative to the car
+int objIdent() {
+  float* readings = scanRadar();
+  int minIndex = -1;
+  float minDist = 200;
+
+  for (int i = 0; i < 8; i++) {
+    if (readings[i] < minDist) {
+      minDist = readings[i];
+      minIndex = i;
+    }
+  }
+  return minIndex;
+}
+//Movement functions with no return
+void forward() {
+  digitalWrite(motorPin1, HIGH);
+  digitalWrite(motorPin2, LOW);
+  digitalWrite(motorPin3, HIGH);
+  digitalWrite(motorPin4, LOW);
+}
+
+void stopMotors() {
+  digitalWrite(motorPin1, LOW);
+  digitalWrite(motorPin2, LOW);
+  digitalWrite(motorPin3, LOW);
+  digitalWrite(motorPin4, LOW);
+}
+
+void reverse() {
+  digitalWrite(motorPin1, LOW);
+  digitalWrite(motorPin2, HIGH);
+  digitalWrite(motorPin3, LOW);
+  digitalWrite(motorPin4, HIGH);
+}
+
+//A more advanced movment function which will check the distance and reverse if needed.
+bool checkReverse(int samples = 1) {
+  if (averageDistance(samples) < 20) {
+    stopMotors();
+    reverse();
+    delay(1000);
+    stopMotors();
+    return true;
+  }
+  return false;
+}
+
+//Hardware initialized and communications started.
+void setup() {
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  radarServo.attach(radarServoPin);
+  steeringServo.attach(steeringServoPin);
+  steeringServo.write(90);
+
+  pinMode(motorPin1, OUTPUT);
+  pinMode(motorPin2, OUTPUT);
+  pinMode(motorPin3, OUTPUT);
+  pinMode(motorPin4, OUTPUT);
+
+  Serial.begin(9600);
+  delay(3000);
+}
+
+// movement logic loop with object detection and reversing in if-statements
+void loop() {
+     steeringServo.write(90); 
+  if (checkReverse()) {
+    steeringServo.write(90);
+    return;
+  }
+
+  int objPos = objIdent();
+  Serial.println(objPos);
+
+  if (objPos == -1) {
+    Serial.println("fram");
+    forward();
+    steeringServo.write(90);
+  }
+  else if (objPos < 4) {
+    Serial.println("vänster");
+    steeringServo.write(70);
+    forward();
+  }
+  else {
+    Serial.println("höger");
+    steeringServo.write(110);
+    forward();
+  }
+}
